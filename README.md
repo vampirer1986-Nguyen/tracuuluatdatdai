@@ -15,7 +15,7 @@
 pip install -r requirements.txt
 ```
 
-## 2. Lấy API Key
+## 2. Lấy API Key và cấu hình (KHÔNG nhập trên giao diện)
 
 - **Pinecone**: đăng ký miễn phí tại https://app.pinecone.io, vào mục
   "API Keys" để lấy khóa. Lưu ý dự án Pinecone cần được tạo ở khu vực hỗ
@@ -24,8 +24,16 @@ pip install -r requirements.txt
 - **Groq**: đăng ký miễn phí tại https://console.groq.com, vào mục
   "API Keys" để tạo khóa.
 
-Bạn **không cần chỉnh sửa code** — chỉ cần nhập 2 khóa trên vào thanh bên
-trái (sidebar) khi mở ứng dụng.
+Vì app deploy công khai (ai có link cũng vào được), 2 key này **không được
+nhập hay hiển thị trên giao diện** để tránh bị lộ cho người khác — thay vào
+đó chỉ chủ app (bạn) mới cấu hình được, thông qua Secrets phía máy chủ:
+
+- **Chạy local**: tạo file `.streamlit/secrets.toml` (copy từ file mẫu
+  [`.streamlit/secrets.toml.example`](.streamlit/secrets.toml.example)) rồi
+  điền key thật vào. File này đã có trong `.gitignore` nên sẽ không bao giờ
+  bị đẩy lên GitHub.
+- **Deploy trên Streamlit Cloud**: điền key thật vào mục Settings → Secrets
+  của app (xem mục 5 bên dưới).
 
 ## 3. Chạy ứng dụng
 
@@ -34,15 +42,15 @@ streamlit run app.py
 ```
 
 Sau đó mở trình duyệt theo địa chỉ Streamlit hiển thị (thường là
-http://localhost:8501).
+http://localhost:8501). Sidebar chỉ hiển thị trạng thái "đã cấu hình /
+chưa cấu hình" cho từng key, không hiển thị giá trị key.
 
 ## 4. Sử dụng
 
-1. Nhập Pinecone API Key và Groq API Key ở sidebar.
-2. Ở mục "1. Tải lên văn bản PDF", chọn một hoặc nhiều file PDF rồi bấm
+1. Ở mục "1. Tải lên văn bản PDF", chọn một hoặc nhiều file PDF rồi bấm
    "Tải lên & Lưu vào Pinecone". File đã lưu trước đó (trùng tên) sẽ tự
    động bị bỏ qua.
-3. Ở mục "2. Đặt câu hỏi", gõ câu hỏi và bấm "Tìm câu trả lời". Ứng dụng sẽ
+2. Ở mục "2. Đặt câu hỏi", gõ câu hỏi và bấm "Tìm câu trả lời". Ứng dụng sẽ
    hiển thị câu trả lời kèm nguồn tham khảo (tên file, đoạn văn bản).
 
 ## 5. Deploy lên Streamlit Community Cloud (miễn phí)
@@ -50,15 +58,18 @@ http://localhost:8501).
 1. Đẩy code lên một repository GitHub (repo có thể public hoặc private).
 2. Vào https://share.streamlit.io, đăng nhập bằng tài khoản GitHub.
 3. Bấm "New app", chọn repo/branch vừa đẩy lên, chọn file chính là `app.py`.
-4. (Tuỳ chọn) Vào "Advanced settings" → "Secrets", dán nội dung theo mẫu
+4. **Bắt buộc**: vào "Advanced settings" → "Secrets", dán nội dung theo mẫu
    trong file [`.streamlit/secrets.toml.example`](.streamlit/secrets.toml.example)
-   và điền API Key thật của bạn vào. Khi đó app sẽ tự điền sẵn API Key mỗi
-   lần bạn mở lên (vẫn có thể sửa lại ở sidebar nếu muốn dùng key khác).
+   và điền API Key thật của bạn vào. Không có bước này app sẽ báo lỗi "chưa
+   cấu hình" và không dùng được.
 5. Bấm "Deploy". Sau vài phút app sẽ có link dạng
-   `https://ten-app.streamlit.app` để bạn truy cập từ bất kỳ đâu.
+   `https://ten-app.streamlit.app` để bạn truy cập từ bất kỳ đâu — người
+   khác mở link cũng dùng được app (bằng key của bạn) nhưng không thể xem
+   hay lấy được key đó.
 
-Lưu ý: file `.streamlit/secrets.toml` (chứa key thật) đã được thêm vào
-`.gitignore` — không bao giờ bị đẩy lên GitHub.
+⚠️ Vì bất kỳ ai có link cũng dùng được key của bạn để gọi Pinecone/Groq,
+hãy cân nhắc thêm lớp mật khẩu bảo vệ app nếu không muốn người lạ dùng
+chung quota, hoặc theo dõi usage trên dashboard Pinecone/Groq.
 
 ## Ghi chú kỹ thuật (không bắt buộc đọc)
 

@@ -235,8 +235,10 @@ def ask_groq(groq_api_key: str, model: str, question: str, contexts: list[dict])
 
 
 def get_secret(key: str) -> str:
-    """Đọc giá trị từ Streamlit Secrets nếu có cấu hình sẵn (khi deploy lên
-    Streamlit Cloud), nếu không thì trả về chuỗi rỗng để người dùng tự nhập."""
+    """Đọc giá trị từ Streamlit Secrets (cấu hình trong Settings -> Secrets
+    trên Streamlit Cloud, hoặc file .streamlit/secrets.toml khi chạy máy local).
+    API key KHÔNG được nhập/hiển thị trên giao diện để tránh lộ key cho người
+    xem app qua link public."""
     try:
         return st.secrets.get(key, "")
     except Exception:
@@ -249,16 +251,17 @@ def get_secret(key: str) -> str:
 st.title("⚖️ Tra cứu Luật Đất Đai Việt Nam")
 st.caption("Tải lên văn bản PDF, sau đó đặt câu hỏi để tra cứu nội dung liên quan.")
 
+pinecone_api_key = get_secret("PINECONE_API_KEY")
+groq_api_key = get_secret("GROQ_API_KEY")
+
 with st.sidebar:
-    st.header("🔑 Cấu hình API")
-    pinecone_api_key = st.text_input(
-        "Pinecone API Key", type="password",
-        value=st.session_state.get("pinecone_api_key") or get_secret("PINECONE_API_KEY"))
-    groq_api_key = st.text_input(
-        "Groq API Key", type="password",
-        value=st.session_state.get("groq_api_key") or get_secret("GROQ_API_KEY"))
-    st.session_state["pinecone_api_key"] = pinecone_api_key
-    st.session_state["groq_api_key"] = groq_api_key
+    st.header("🔑 Trạng thái kết nối")
+    st.write("✅ Pinecone API Key: đã cấu hình" if pinecone_api_key else "❌ Pinecone API Key: chưa cấu hình")
+    st.write("✅ Groq API Key: đã cấu hình" if groq_api_key else "❌ Groq API Key: chưa cấu hình")
+    st.caption(
+        "Key được đọc từ Secrets phía máy chủ (Settings → Secrets trên "
+        "Streamlit Cloud), không hiển thị hay nhập trên giao diện để tránh lộ key."
+    )
 
     groq_model = None
     if groq_api_key:
@@ -290,7 +293,11 @@ with st.sidebar:
     st.caption(f"Mô hình embedding: `{EMBED_MODEL}`")
 
 if not pinecone_api_key:
-    st.info("👈 Vui lòng nhập Pinecone API Key ở thanh bên trái để bắt đầu.")
+    st.error(
+        "Chưa cấu hình Pinecone API Key. Vào Settings → Secrets trên Streamlit "
+        "Cloud (hoặc file .streamlit/secrets.toml khi chạy local) và thêm dòng:\n\n"
+        '`PINECONE_API_KEY = "key-thật-của-bạn"`'
+    )
     st.stop()
 
 # Khởi tạo Pinecone / index (cache theo API key để không tạo lại mỗi lần)
@@ -387,7 +394,11 @@ question = st.text_input("Nhập câu hỏi của bạn về Luật Đất đai.
 
 if st.button("🔍 Tìm câu trả lời") and question.strip():
     if not groq_api_key:
-        st.error("Vui lòng nhập Groq API Key ở thanh bên trái để có thể tạo câu trả lời.")
+        st.error(
+            "Chưa cấu hình Groq API Key. Vào Settings → Secrets trên Streamlit "
+            "Cloud (hoặc file .streamlit/secrets.toml khi chạy local) và thêm dòng:\n\n"
+            '`GROQ_API_KEY = "key-thật-của-bạn"`'
+        )
         st.stop()
 
     with st.spinner("Đang tìm kiếm nội dung liên quan..."):
