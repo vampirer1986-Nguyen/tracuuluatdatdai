@@ -15,6 +15,7 @@ Cách hoạt động (tự động, không cần biết kỹ thuật):
 """
 
 import hashlib
+import os
 import time
 
 import pymupdf
@@ -235,14 +236,18 @@ def ask_groq(groq_api_key: str, model: str, question: str, contexts: list[dict])
 
 
 def get_secret(key: str) -> str:
-    """Đọc giá trị từ Streamlit Secrets (cấu hình trong Settings -> Secrets
-    trên Streamlit Cloud, hoặc file .streamlit/secrets.toml khi chạy máy local).
+    """Đọc giá trị từ Streamlit Secrets (Settings -> Secrets trên Streamlit
+    Cloud, hoặc file .streamlit/secrets.toml khi chạy local), hoặc từ biến
+    môi trường (tiện khi chạy bằng Docker: `docker run -e KEY=...`).
     API key KHÔNG được nhập/hiển thị trên giao diện để tránh lộ key cho người
     xem app qua link public."""
     try:
-        return st.secrets.get(key, "")
+        value = st.secrets.get(key, "")
+        if value:
+            return value
     except Exception:
-        return ""
+        pass
+    return os.environ.get(key, "")
 
 
 # ----------------------------------------------------------------------------

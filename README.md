@@ -71,6 +71,20 @@ chưa cấu hình" cho từng key, không hiển thị giá trị key.
 hãy cân nhắc thêm lớp mật khẩu bảo vệ app nếu không muốn người lạ dùng
 chung quota, hoặc theo dõi usage trên dashboard Pinecone/Groq.
 
+## 6. Chạy bằng Docker
+
+```bash
+docker build -t tracuuluatdatdai .
+docker run -d -p 8501:8501 \
+  -e PINECONE_API_KEY="key-thật-của-bạn" \
+  -e GROQ_API_KEY="key-thật-của-bạn" \
+  --name tracuuluatdatdai \
+  tracuuluatdatdai
+```
+
+Sau đó mở http://localhost:8501. Key được truyền qua biến môi trường
+(`-e`), không cần mount file secrets. Muốn dừng: `docker stop tracuuluatdatdai`.
+
 ## Ghi chú kỹ thuật (không bắt buộc đọc)
 
 - Index Pinecone được tạo tự động ở lần chạy đầu tiên (serverless, dùng
