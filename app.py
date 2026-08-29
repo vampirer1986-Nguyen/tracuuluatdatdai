@@ -371,7 +371,7 @@ with st.sidebar:
     if auth_role == "guest":
         _, expires_display = guest_status()
         if expires_display:
-            st.caption(f"Hạn dùng: đến hết ngày {expires_display} (UTC)")
+            st.markdown(f":red[**Hạn dùng: đến hết ngày {expires_display} (UTC)**]")
         st.caption(f"Giới hạn: {GUEST_MAX_QUESTIONS_PER_HOUR} câu hỏi / giờ")
     if st.button("🚪 Đăng xuất"):
         st.session_state["auth_role"] = None
