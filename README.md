@@ -67,17 +67,46 @@ chưa cấu hình" cho từng key, không hiển thị giá trị key.
    khác mở link cũng dùng được app (bằng key của bạn) nhưng không thể xem
    hay lấy được key đó.
 
-⚠️ Vì bất kỳ ai có link cũng dùng được key của bạn để gọi Pinecone/Groq,
-hãy cân nhắc thêm lớp mật khẩu bảo vệ app nếu không muốn người lạ dùng
-chung quota, hoặc theo dõi usage trên dashboard Pinecone/Groq.
+## 6. Đăng nhập & phân quyền (Admin / Guest)
 
-## 6. Chạy bằng Docker
+App yêu cầu đăng nhập bằng mật khẩu trước khi dùng được, để người lạ có
+link không tự ý dùng chung quota Pinecone/Groq của bạn.
+
+Cấu hình 3 secret sau (xem file mẫu
+[`.streamlit/secrets.toml.example`](.streamlit/secrets.toml.example)):
+
+```toml
+ADMIN_PASSWORD = "mật-khẩu-admin-của-bạn"
+GUEST_PASSWORD = "mật-khẩu-chia-sẻ-cho-người-quen"
+GUEST_EXPIRES_AT = "2026-12-31"   # định dạng YYYY-MM-DD, tính theo UTC
+```
+
+- **Admin**: đăng nhập bằng `ADMIN_PASSWORD` → toàn quyền (tải PDF + đặt câu hỏi).
+- **Guest**: đăng nhập bằng `GUEST_PASSWORD` → chỉ được đặt câu hỏi, không
+  thấy mục tải PDF. Chỉ đăng nhập được nếu ngày hiện tại (UTC) **chưa vượt
+  quá** `GUEST_EXPIRES_AT`; qua ngày đó tài khoản guest tự động vô hiệu hoá
+  (kể cả đang trong phiên đăng nhập cũng bị đăng xuất ở lượt tương tác kế
+  tiếp) — không cần bạn phải tự tay tắt.
+- Nếu `GUEST_EXPIRES_AT` để trống hoặc sai định dạng, tài khoản guest sẽ
+  **không đăng nhập được** — hạn dùng là bắt buộc đối với guest.
+- Nhập sai mật khẩu quá 5 lần sẽ bị khoá tạm 30 giây để chống dò mật khẩu.
+- Guest bị giới hạn tối đa 20 câu hỏi/giờ để tránh một mật khẩu guest bị
+  lộ/chia sẻ tiếp gây tốn quota quá mức.
+- Đây là mô hình "biết mật khẩu = có quyền", không phân biệt được từng
+  người cụ thể trong nhóm dùng chung `GUEST_PASSWORD`. Đăng nhập chỉ tồn
+  tại trong phiên trình duyệt hiện tại — đóng tab/tải lại trang sẽ phải
+  đăng nhập lại.
+
+## 7. Chạy bằng Docker
 
 ```bash
 docker build -t tracuuluatdatdai .
 docker run -d -p 8501:8501 \
   -e PINECONE_API_KEY="key-thật-của-bạn" \
   -e GROQ_API_KEY="key-thật-của-bạn" \
+  -e ADMIN_PASSWORD="mật-khẩu-admin-của-bạn" \
+  -e GUEST_PASSWORD="mật-khẩu-chia-sẻ-cho-người-quen" \
+  -e GUEST_EXPIRES_AT="2026-12-31" \
   --name tracuuluatdatdai \
   tracuuluatdatdai
 ```

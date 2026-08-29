@@ -15,8 +15,10 @@ Cách hoạt động (tự động, không cần biết kỹ thuật):
 """
 
 import hashlib
+import hmac
 import os
 import time
+from datetime import date, datetime, timezone
 
 import pymupdf
 import streamlit as st
@@ -37,6 +39,11 @@ CHUNK_SIZE = 1200                  # số ký tự mỗi đoạn
 CHUNK_OVERLAP = 150                # số ký tự gối lên nhau giữa các đoạn
 TOP_K = 6                          # số đoạn liên quan lấy ra khi tìm kiếm
 UPSERT_BATCH = 90                  # Pinecone giới hạn ~96 record/lần upsert_records
+
+# --- Đăng nhập / phân quyền ---
+MAX_LOGIN_ATTEMPTS = 5             # số lần nhập sai mật khẩu trước khi bị khoá tạm
+LOGIN_LOCKOUT_SECONDS = 30         # thời gian khoá sau khi nhập sai quá số lần trên
+GUEST_MAX_QUESTIONS_PER_HOUR = 20  # giới hạn số câu hỏi mỗi phiên guest / giờ
 
 st.set_page_config(page_title="Tra cứu Luật Đất Đai VN", page_icon="⚖️", layout="wide")
 
@@ -251,8 +258,106 @@ def get_secret(key: str) -> str:
 
 
 # ----------------------------------------------------------------------------
+# Đăng nhập & phân quyền (admin: toàn quyền, guest: chỉ đặt câu hỏi)
+# ----------------------------------------------------------------------------
+def guest_status() -> tuple[bool, str]:
+    """Kiểm tra hạn dùng của tài khoản guest dựa trên secret GUEST_EXPIRES_AT
+    (định dạng YYYY-MM-DD, tính theo UTC, còn hiệu lực đến hết ngày đó).
+    Guest không có hạn dùng được cấu hình thì coi như CHƯA bật, không cho
+    đăng nhập — hạn dùng là bắt buộc đối với tài khoản guest."""
+    expires_raw = get_secret("GUEST_EXPIRES_AT").strip()
+    if not expires_raw:
+        return False, ""
+    try:
+        expiry_date = date.fromisoformat(expires_raw)
+    except ValueError:
+        return False, ""
+    today = datetime.now(timezone.utc).date()
+    return today <= expiry_date, expiry_date.isoformat()
+
+
+def render_login_gate():
+    """Chặn toàn bộ nội dung app cho tới khi nhập đúng mật khẩu. Set
+    session_state['auth_role'] = 'admin' hoặc 'guest' khi thành công."""
+    st.session_state.setdefault("auth_role", None)
+    st.session_state.setdefault("login_attempts", 0)
+    st.session_state.setdefault("login_locked_until", 0.0)
+
+    if st.session_state["auth_role"] == "guest":
+        active, _ = guest_status()
+        if not active:
+            st.session_state["auth_role"] = None
+            st.session_state["login_error_msg"] = "Tài khoản khách (guest) đã hết hạn sử dụng."
+
+    if st.session_state["auth_role"]:
+        return  # đã đăng nhập hợp lệ
+
+    st.title("⚖️ Tra cứu Luật Đất Đai Việt Nam")
+    st.caption("Vui lòng đăng nhập để sử dụng.")
+
+    now = time.time()
+    if now < st.session_state["login_locked_until"]:
+        remaining = int(st.session_state["login_locked_until"] - now)
+        st.error(f"Bạn đã nhập sai quá nhiều lần. Vui lòng thử lại sau {remaining} giây.")
+        st.stop()
+
+    error_msg = st.session_state.pop("login_error_msg", None)
+    if error_msg:
+        st.error(error_msg)
+
+    password = st.text_input("Mật khẩu truy cập", type="password", key="login_password_input")
+    if st.button("Đăng nhập", type="primary"):
+        admin_pw = get_secret("ADMIN_PASSWORD")
+        guest_pw = get_secret("GUEST_PASSWORD")
+
+        role = None
+        error_msg = "Sai mật khẩu."
+        if admin_pw and hmac.compare_digest(password, admin_pw):
+            role = "admin"
+        elif guest_pw and hmac.compare_digest(password, guest_pw):
+            active, _ = guest_status()
+            if active:
+                role = "guest"
+            else:
+                error_msg = "Tài khoản khách (guest) đã hết hạn sử dụng."
+
+        if role:
+            st.session_state["auth_role"] = role
+            st.session_state["login_attempts"] = 0
+            st.rerun()
+        else:
+            st.session_state["login_attempts"] += 1
+            if st.session_state["login_attempts"] >= MAX_LOGIN_ATTEMPTS:
+                st.session_state["login_locked_until"] = time.time() + LOGIN_LOCKOUT_SECONDS
+                st.session_state["login_attempts"] = 0
+            st.session_state["login_error_msg"] = error_msg
+            st.rerun()
+
+    st.stop()
+
+
+def check_guest_rate_limit() -> bool:
+    """Trả về True nếu phiên guest hiện tại còn được phép hỏi tiếp, False nếu
+    đã vượt giới hạn GUEST_MAX_QUESTIONS_PER_HOUR trong 1 giờ gần nhất."""
+    if st.session_state.get("auth_role") != "guest":
+        return True
+    now = time.time()
+    timestamps = [t for t in st.session_state.get("guest_question_timestamps", []) if now - t < 3600]
+    if len(timestamps) >= GUEST_MAX_QUESTIONS_PER_HOUR:
+        st.session_state["guest_question_timestamps"] = timestamps
+        return False
+    timestamps.append(now)
+    st.session_state["guest_question_timestamps"] = timestamps
+    return True
+
+
+# ----------------------------------------------------------------------------
 # Giao diện Streamlit
 # ----------------------------------------------------------------------------
+render_login_gate()  # chặn hết nội dung bên dưới nếu chưa đăng nhập
+
+auth_role = st.session_state["auth_role"]
+
 st.title("⚖️ Tra cứu Luật Đất Đai Việt Nam")
 st.caption("Tải lên văn bản PDF, sau đó đặt câu hỏi để tra cứu nội dung liên quan.")
 
@@ -260,6 +365,19 @@ pinecone_api_key = get_secret("PINECONE_API_KEY")
 groq_api_key = get_secret("GROQ_API_KEY")
 
 with st.sidebar:
+    st.header("👤 Tài khoản")
+    role_label = "Admin (toàn quyền)" if auth_role == "admin" else "Guest (chỉ đặt câu hỏi)"
+    st.write(f"Đang đăng nhập: **{role_label}**")
+    if auth_role == "guest":
+        _, expires_display = guest_status()
+        if expires_display:
+            st.caption(f"Hạn dùng: đến hết ngày {expires_display} (UTC)")
+        st.caption(f"Giới hạn: {GUEST_MAX_QUESTIONS_PER_HOUR} câu hỏi / giờ")
+    if st.button("🚪 Đăng xuất"):
+        st.session_state["auth_role"] = None
+        st.rerun()
+
+    st.markdown("---")
     st.header("🔑 Trạng thái kết nối")
     st.write("✅ Pinecone API Key: đã cấu hình" if pinecone_api_key else "❌ Pinecone API Key: chưa cấu hình")
     st.write("✅ Groq API Key: đã cấu hình" if groq_api_key else "❌ Groq API Key: chưa cấu hình")
@@ -318,77 +436,78 @@ except Exception as e:
     st.stop()
 
 # ----------------------------------------------------------------------------
-# Phần 1: Tải lên PDF
+# Phần 1: Tải lên PDF (chỉ admin)
 # ----------------------------------------------------------------------------
-st.subheader("1. Tải lên văn bản PDF")
+if auth_role == "admin":
+    st.subheader("1. Tải lên văn bản PDF")
 
-uploaded_files = st.file_uploader(
-    "Chọn một hoặc nhiều file PDF", type=["pdf"], accept_multiple_files=True
-)
+    uploaded_files = st.file_uploader(
+        "Chọn một hoặc nhiều file PDF", type=["pdf"], accept_multiple_files=True
+    )
 
-if "last_upload_summary" not in st.session_state:
-    st.session_state["last_upload_summary"] = None
+    if "last_upload_summary" not in st.session_state:
+        st.session_state["last_upload_summary"] = None
 
-if uploaded_files and st.button("📤 Tải lên & Lưu vào Pinecone", type="primary"):
-    progress = st.progress(0, text="Đang xử lý...")
-    total = len(uploaded_files)
-    added, skipped, failed = [], [], []
+    if uploaded_files and st.button("📤 Tải lên & Lưu vào Pinecone", type="primary"):
+        progress = st.progress(0, text="Đang xử lý...")
+        total = len(uploaded_files)
+        added, skipped, failed = [], [], []
 
-    for i, f in enumerate(uploaded_files):
-        progress.progress(i / total, text=f"Đang xử lý: {f.name}")
-        fhash = file_hash(f.name)
-        try:
-            if file_already_exists(index, NAMESPACE, fhash):
-                skipped.append(f.name)
-                continue
-            text = extract_text_from_pdf(f)
-            chunks = split_into_chunks(text)
-            if not chunks or len(text.strip()) < 200:
-                failed.append((
-                    f.name,
-                    "Không trích xuất được nội dung văn bản (chỉ đọc được "
-                    f"{len(text.strip())} ký tự). File có thể là bản scan/ảnh "
-                    "không có lớp văn bản — hãy dùng công cụ OCR (ví dụ mở file "
-                    "bằng Google Drive > Google Docs để tự động OCR) rồi tải "
-                    "lại file đã OCR.",
-                ))
-                continue
-            upsert_pdf(index, NAMESPACE, f.name, chunks)
-            added.append((f.name, len(chunks)))
-        except Exception as e:
-            failed.append((f.name, str(e)))
+        for i, f in enumerate(uploaded_files):
+            progress.progress(i / total, text=f"Đang xử lý: {f.name}")
+            fhash = file_hash(f.name)
+            try:
+                if file_already_exists(index, NAMESPACE, fhash):
+                    skipped.append(f.name)
+                    continue
+                text = extract_text_from_pdf(f)
+                chunks = split_into_chunks(text)
+                if not chunks or len(text.strip()) < 200:
+                    failed.append((
+                        f.name,
+                        "Không trích xuất được nội dung văn bản (chỉ đọc được "
+                        f"{len(text.strip())} ký tự). File có thể là bản scan/ảnh "
+                        "không có lớp văn bản — hãy dùng công cụ OCR (ví dụ mở file "
+                        "bằng Google Drive > Google Docs để tự động OCR) rồi tải "
+                        "lại file đã OCR.",
+                    ))
+                    continue
+                upsert_pdf(index, NAMESPACE, f.name, chunks)
+                added.append((f.name, len(chunks)))
+            except Exception as e:
+                failed.append((f.name, str(e)))
 
-    progress.progress(1.0, text="Hoàn tất")
-    if added:
-        # Pinecone cần vài giây để dữ liệu vừa upsert xuất hiện trong list()/search()
-        time.sleep(2)
-        st.cache_data.clear()
-    st.session_state["last_upload_summary"] = {"added": added, "skipped": skipped, "failed": failed}
+        progress.progress(1.0, text="Hoàn tất")
+        if added:
+            # Pinecone cần vài giây để dữ liệu vừa upsert xuất hiện trong list()/search()
+            time.sleep(2)
+            st.cache_data.clear()
+        st.session_state["last_upload_summary"] = {"added": added, "skipped": skipped, "failed": failed}
 
-summary = st.session_state["last_upload_summary"]
-if summary:
-    if summary["added"]:
-        st.success("Đã lưu: " + ", ".join(f"{name} ({n} đoạn)" for name, n in summary["added"]))
-    if summary["skipped"]:
-        st.warning("Bỏ qua (đã tồn tại trong Pinecone): " + ", ".join(summary["skipped"]))
-    if summary["failed"]:
-        for name, err in summary["failed"]:
-            st.error(f"Lỗi khi xử lý {name}: {err}")
+    summary = st.session_state["last_upload_summary"]
+    if summary:
+        if summary["added"]:
+            st.success("Đã lưu: " + ", ".join(f"{name} ({n} đoạn)" for name, n in summary["added"]))
+        if summary["skipped"]:
+            st.warning("Bỏ qua (đã tồn tại trong Pinecone): " + ", ".join(summary["skipped"]))
+        if summary["failed"]:
+            for name, err in summary["failed"]:
+                st.error(f"Lỗi khi xử lý {name}: {err}")
 
-with st.expander("📂 Danh sách file đã lưu trong Pinecone", expanded=bool(summary and summary.get("added"))):
-    if st.button("🔄 Làm mới danh sách"):
-        st.cache_data.clear()
+    with st.expander("📂 Danh sách file đã lưu trong Pinecone", expanded=bool(summary and summary.get("added"))):
+        if st.button("🔄 Làm mới danh sách"):
+            st.cache_data.clear()
 
-    @st.cache_data(show_spinner="Đang tải danh sách file...", ttl=30)
-    def _list_files(_index):
-        return list_stored_files(_index, NAMESPACE)
+        @st.cache_data(show_spinner="Đang tải danh sách file...", ttl=30)
+        def _list_files(_index):
+            return list_stored_files(_index, NAMESPACE)
 
-    files = _list_files(index)
-    if files:
-        for name in files:
-            st.write(f"- {name}")
-    else:
-        st.caption("Chưa có file nào được lưu.")
+        files = _list_files(index)
+        if files:
+            for name in files:
+                st.write(f"- {name}")
+        else:
+            st.caption("Chưa có file nào được lưu.")
 
 # ----------------------------------------------------------------------------
 # Phần 2: Đặt câu hỏi
@@ -403,6 +522,13 @@ if st.button("🔍 Tìm câu trả lời") and question.strip():
             "Chưa cấu hình Groq API Key. Vào Settings → Secrets trên Streamlit "
             "Cloud (hoặc file .streamlit/secrets.toml khi chạy local) và thêm dòng:\n\n"
             '`GROQ_API_KEY = "key-thật-của-bạn"`'
+        )
+        st.stop()
+
+    if not check_guest_rate_limit():
+        st.error(
+            f"Tài khoản khách chỉ được hỏi tối đa {GUEST_MAX_QUESTIONS_PER_HOUR} "
+            "câu/giờ. Vui lòng thử lại sau."
         )
         st.stop()
 
